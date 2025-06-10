@@ -1,0 +1,123 @@
+//@version=6
+indicator(title="EMA ATR Confluence Alert By Pankaj", overlay=true)
+
+// === SYMBOL FILTER ===
+isUSDJPY = syminfo.ticker == "USDJPY" // Consider using syminfo.tickerid if "USDJPY" alone isn't specific enough (e.g., "FX:USDJPY" or your broker's specific prefix)
+
+// === INPUTS ===
+// --- Time Filter Inputs (IST) ---
+deadStartHour = input.int(0, title="Dead Period Start Hour (IST)", minval=0, maxval=23, tooltip="Dead period is 00:00-06:00 IST. Active trading: 06:00 IST to midnight. This is the start hour of the dead period (e.g., 0 for 00:00 IST).")
+deadStartMinute = input.int(0, title="Dead Period Start Minute (IST)", minval=0, maxval=59)
+deadEndHour = input.int(6, title="Dead Period End Hour (IST)", minval=0, maxval=23, tooltip="This is the end hour of the dead period. Trading resumes at this time (e.g., 6 for 06:00 IST).")
+deadEndMinute = input.int(0, title="Dead Period End Minute (IST)", minval=0, maxval=59)
+
+// --- EMA Lengths ---
+len9 = input.int(9, title="EMA 9 Length")
+len20 = input.int(20, title="EMA 20 Length")
+len200 = input.int(200, title="EMA 200 Length")
+emaSource = input.source(close, "EMA Source")
+
+// ATR Filter Settings
+atrPeriod = input.int(14, title="ATR Period")
+atrMultiplier = input.float(0.25, title="ATR Multiplier", step=0.05)
+maxBarsAfterCross = input.int(3, title="Max Bars to Wait After Cross")
+
+// === TIME FILTERING LOGIC ===
+// Current UTC time
+currentHourUTC = hour(time, "UTC")
+currentMinuteUTC = minute(time, "UTC")
+currentTimeUTC_Decimal = currentHourUTC + (currentMinuteUTC / 60.0)
+
+// IST offset
+istOffset = 5.5
+
+// Current IST time
+currentTimeIST_Decimal = (currentTimeUTC_Decimal + istOffset) % 24.0
+if currentTimeIST_Decimal < 0
+    currentTimeIST_Decimal := currentTimeIST_Decimal + 24.0
+
+// Dead period boundaries in IST decimal format
+deadStartTimeIST_Decimal = deadStartHour + (deadStartMinute / 60.0)
+deadEndTimeIST_Decimal = deadEndHour + (deadEndMinute / 60.0)
+
+// Determine if in dead period (e.g., 00:00 IST to 06:00 IST)
+isDeadPeriod = if deadStartTimeIST_Decimal < deadEndTimeIST_Decimal // Standard case: e.g., 00:00 to 06:00
+    currentTimeIST_Decimal >= deadStartTimeIST_Decimal and currentTimeIST_Decimal < deadEndTimeIST_Decimal
+else // Overnight case: e.g., 22:00 to 06:00 (if inputs were different)
+    currentTimeIST_Decimal >= deadStartTimeIST_Decimal or currentTimeIST_Decimal < deadEndTimeIST_Decimal
+
+// === TIMEFRAME FILTER ===
+isAllowedTimeframe = timeframe.isminutes and (timeframe.multiplier == 5 or timeframe.multiplier == 15)
+
+// Determine if in active trading session (USDJPY, not dead period, and allowed timeframe)
+isTradingSession = isUSDJPY and not isDeadPeriod and isAllowedTimeframe
+
+// === CALCULATIONS ===
+// EMAs
+ema9 = ta.ema(emaSource, len9)
+ema20 = ta.ema(emaSource, len20)
+ema200 = ta.ema(emaSource, len200)
+
+// ATR
+atr = ta.atr(atrPeriod)
+emaDiff = math.abs(ema9 - ema20)
+minGapForSignal = atr * atrMultiplier
+
+// Cross Detection
+crossedAbove = ta.crossover(ema9, ema20)
+crossedBelow = ta.crossunder(ema9, ema20)
+
+// Signal Validation using ATR
+var int barsAfterLongCross = 0
+var int barsAfterShortCross = 0
+var bool waitingForLongSignal = false
+var bool waitingForShortSignal = false
+
+// Reset and update counters
+if crossedAbove
+    barsAfterLongCross := 0
+    waitingForLongSignal := true
+if crossedBelow
+    barsAfterShortCross := 0
+    waitingForShortSignal := true
+
+// Increment counters
+barsAfterLongCross := waitingForLongSignal ? barsAfterLongCross + 1 : barsAfterLongCross
+barsAfterShortCross := waitingForShortSignal ? barsAfterShortCross + 1 : barsAfterShortCross
+
+// Generate Signals
+validLongSignal = isTradingSession and waitingForLongSignal and emaDiff > minGapForSignal and barsAfterLongCross <= maxBarsAfterCross
+validShortSignal = isTradingSession and waitingForShortSignal and emaDiff > minGapForSignal and barsAfterShortCross <= maxBarsAfterCross
+
+// Reset waiting flags after signal or timeout
+if validLongSignal or barsAfterLongCross > maxBarsAfterCross
+    waitingForLongSignal := false
+if validShortSignal or barsAfterShortCross > maxBarsAfterCross
+    waitingForShortSignal := false
+
+// Combined signal for single alert
+anySignal = validLongSignal or validShortSignal
+signalType = validLongSignal ? "LONG" : validShortSignal ? "SHORT" : "NONE"
+
+// Calculate percentage distance from 200 EMA
+percentageDistance = ((close - ema200) / ema200) * 100
+percentageDistanceStr = str.tostring(percentageDistance, '#.##') + "%"
+
+// === PLOTTING ===
+// Plot EMAs
+plot(ema9, title="EMA 9", color = isTradingSession ? color.new(color.blue, 0) : na, linewidth=1)
+plot(ema20, title="EMA 20", color = isTradingSession ? color.new(color.orange, 0) : na, linewidth=1)
+plot(ema200, title="EMA 200", color = isTradingSession ? color.new(color.red, 0) : na, linewidth=2)
+
+// Plot Signals
+plotshape(validLongSignal, title="Long Signal", location=location.belowbar, 
+         color=color.new(color.green, 0), style=shape.triangleup, size=size.small)
+plotshape(validShortSignal, title="Short Signal", location=location.abovebar, 
+         color=color.new(color.red, 0), style=shape.triangledown, size=size.small)
+
+// Highlight dead period with white background (only on allowed timeframes for USDJPY)
+bgcolor(isUSDJPY and isDeadPeriod and isAllowedTimeframe ? color.new(color.white, 85) : na, title="Dead Period Zone")
+
+// Add alert condition for both signals
+alertcondition(anySignal, title="EMA Signal Alert", 
+             message="EMA Signal Generated - Distance from 200 EMA: {{percentageDistance}}") 
