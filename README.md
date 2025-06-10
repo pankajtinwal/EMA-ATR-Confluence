@@ -1,6 +1,6 @@
 # EMA ATR Confluence Alert By Pankaj (TradingView Indicator)
 
-![Indicator Screenshot](image.png)
+![Indicator Screenshot](demo.png)
 
 ## Purpose
 This Pine Script indicator for TradingView is designed to identify potential trade entries on the **USDJPY** currency pair. It operates exclusively on **5-minute and 15-minute** chart timeframes. The core logic relies on EMA (Exponential Moving Average) crossovers, confirmed by an ATR (Average True Range) based gap, and occurring within specific active trading hours (Indian Standard Time).
